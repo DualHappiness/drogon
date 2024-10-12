@@ -92,6 +92,7 @@ class DbClientImpl : public DbClient,
     std::deque<std::shared_ptr<SqlCmd>> sqlCmdBuffer_;
 
     void handleNewTask(const DbConnectionPtr &connPtr);
+    void heartbeat(const DbConnectionPtr &connPtr);
     void execSqlWithTimeout(
         const char *sql,
         size_t sqlLength,

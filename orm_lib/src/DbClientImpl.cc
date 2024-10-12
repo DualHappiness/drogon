@@ -15,6 +15,7 @@
 #include "DbClientImpl.h"
 #include "DbConnection.h"
 #include "../../lib/src/TaskTimeoutFlag.h"
+#include <cstdint>
 #include <drogon/config.h>
 #include <string_view>
 #if USE_POSTGRESQL
@@ -461,6 +462,7 @@ DbConnectionPtr DbClientImpl::newConnection(trantor::EventLoop *loop)
         thisPtr->handleNewTask(connPtr);
     });
 
+
     {
         std::lock_guard<std::mutex> guard(connectionsMutex_);
         connections_.insert(connPtr);
@@ -470,8 +472,39 @@ DbConnectionPtr DbClientImpl::newConnection(trantor::EventLoop *loop)
     // is added to connections_.
     connPtr->init();
 
+    // keep alive
+    loop->runEvery(120, [weakPtr, weakConn] {
+        auto thisPtr = weakPtr.lock();
+        if (!thisPtr)
+            return;
+        auto connPtr = weakConn.lock();
+        if (!connPtr)
+            return;
+        
+        thisPtr->heartbeat(connPtr);
+    });
+
     // std::cout<<"newConn end"<<connPtr<<std::endl;
     return connPtr;
+}
+
+void DbClientImpl::heartbeat(const DbConnectionPtr& connPtr) {
+    std::lock_guard<std::mutex> lock(connectionsMutex_);
+    if (readyConnections_.find(connPtr) == readyConnections_.end()) return;
+
+    readyConnections_.erase(connPtr);
+    busyConnections_.insert(connPtr);
+
+    const uint64_t id = (uint64_t)connPtr.get();
+    LOG_INFO << "db conn [" << (uint64_t)id << "] do heartbeat";
+    connPtr->execSql(
+        "SELECT 1", 0, {}, {}, {},
+        [id](const Result &r) {
+          LOG_INFO << "db conn [" << id << "] do heartbeat success.";
+        },
+        [id](const std::exception_ptr &e) {
+          LOG_INFO << "db conn [" << id << "] do heartbeat error";
+        });
 }
 
 bool DbClientImpl::hasAvailableConnections() const noexcept
